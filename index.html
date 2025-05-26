@@ -2,37 +2,28 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Lasso Fill with Tools + Realtime Draw</title>
+  <title>Lasso Fill with Realtime Drawing</title>
   <style>
-    /* Make body and html take full height & no margin */
+    /* Make sure body and html take full height and no margin */
     html, body {
-      margin: 0; 
-      padding: 0; 
-      height: 100%;
-      overflow: hidden; /* avoid scrolling */
+      margin: 0; padding: 0; height: 100%; overflow: hidden;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none;
     }
-    /* Toolbar styling */
     #toolbar {
       position: fixed;
       top: 10px;
       left: 10px;
-      background: rgba(255, 255, 255, 0.8);
-      padding: 8px;
-      border-radius: 6px;
-      z-index: 1000;
-      user-select: none;
+      z-index: 10;
+      background: rgba(255,255,255,0.9);
+      padding: 10px;
+      border-radius: 8px;
+      box-shadow: 0 0 8px rgba(0,0,0,0.1);
     }
-    /* Canvas should fill full viewport */
     #draw {
       display: block;
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
-      touch-action: none; /* better touch on phones */
+      touch-action: none; /* prevent scrolling on touch */
     }
-    /* Hidden fill color picker */
     #fillColorPicker {
       display: none;
       position: absolute;
@@ -50,16 +41,18 @@
 
   <canvas id="draw"></canvas>
 
+  <!-- Firebase SDK -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-app.js";
-    import { getDatabase, ref, onChildAdded, push, remove, onValue, set } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-database.js";
+    import { getDatabase, ref, push, onChildAdded, remove } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-database.js";
 
+    // Your Firebase config
     const firebaseConfig = {
       apiKey: "AIzaSyAXpYUlrzogc_OQB8upk0q_QrpooOPdX7E",
       authDomain: "lasso-snp.firebaseapp.com",
       databaseURL: "https://lasso-snp-default-rtdb.europe-west1.firebasedatabase.app",
       projectId: "lasso-snp",
-      storageBucket: "lasso-snp.firebasestorage.app",
+      storageBucket: "lasso-snp.appspot.com",
       messagingSenderId: "729910075786",
       appId: "1:729910075786:web:92ff155a709810b3312873",
       measurementId: "G-4213JL7Z0D"
@@ -67,21 +60,24 @@
 
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
+    const drawingsRef = ref(db, "drawings");
 
+    // Canvas & toolbar elements
     const canvas = document.getElementById("draw");
     const ctx = canvas.getContext("2d");
     const colorPicker = document.getElementById("colorPicker");
-    const clearBtn = document.getElementById("clearBtn");
     const undoBtn = document.getElementById("undoBtn");
+    const clearBtn = document.getElementById("clearBtn");
     const fillPageBtn = document.getElementById("fillPageBtn");
     const fillColorPicker = document.getElementById("fillColorPicker");
 
     let isDrawing = false;
     let path = [];
     let filledShapes = [];
-    let currentColor = "#111111";
+    let shapeKeys = [];
+    let currentColor = colorPicker.value;
 
-    // Resize canvas to full viewport exactly
+    // Resize canvas to fill viewport (same for desktop and mobile)
     function resizeCanvas() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
@@ -90,18 +86,19 @@
     window.addEventListener("resize", resizeCanvas);
     resizeCanvas();
 
+    // Get XY coords from mouse or touch event
     function getXY(e) {
-      if (e.touches) {
+      if (e.touches && e.touches.length > 0) {
         return [e.touches[0].clientX, e.touches[0].clientY];
-      } else {
-        return [e.clientX, e.clientY];
       }
+      return [e.clientX, e.clientY];
     }
 
+    // Redraw all filled shapes + current path if drawing
     function redrawCanvas() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      for (let shape of filledShapes) {
+      for (const shape of filledShapes) {
         ctx.beginPath();
         ctx.moveTo(shape.path[0].x, shape.path[0].y);
         for (let i = 1; i < shape.path.length; i++) {
@@ -124,6 +121,7 @@
       }
     }
 
+    // Drawing event handlers
     function startDrawing(e) {
       e.preventDefault();
       isDrawing = true;
@@ -131,7 +129,6 @@
       const [x, y] = getXY(e);
       path.push({ x, y });
     }
-
     function drawPath(e) {
       e.preventDefault();
       if (!isDrawing) return;
@@ -139,60 +136,47 @@
       path.push({ x, y });
       redrawCanvas();
     }
-
     function stopDrawing(e) {
       e.preventDefault();
       if (!isDrawing) return;
       isDrawing = false;
 
       if (path.length > 2) {
-        const shape = { path: [...path], color: currentColor };
-        // Push shape to Firebase
-        push(ref(db, "drawings"), shape);
+        const newShape = {
+          path: [...path],
+          color: currentColor
+        };
+        filledShapes.push(newShape);
+        redrawCanvas();
+        // Push to Firebase
+        push(drawingsRef, newShape);
       }
 
       path = [];
       redrawCanvas();
     }
 
-    // Listen to new drawings from Firebase
-    const drawingsRef = ref(db, "drawings");
-    onChildAdded(drawingsRef, (data) => {
-      filledShapes.push(data.val());
-      redrawCanvas();
-    });
-
-    // Color picker
+    // Toolbar controls
     colorPicker.addEventListener("input", () => {
       currentColor = colorPicker.value;
     });
 
-    // Clear all button
-    clearBtn.addEventListener("click", () => {
-      filledShapes = [];
-      redrawCanvas();
-      remove(drawingsRef); // Clear Firebase too
-    });
-
-    // Undo button (removes last shape)
     undoBtn.addEventListener("click", () => {
-      if (filledShapes.length === 0) return;
+      if (shapeKeys.length === 0) return;
+      const lastKey = shapeKeys.pop();
       filledShapes.pop();
       redrawCanvas();
-      set(drawingsRef, filledShapes); // Update Firebase with new array
+      remove(ref(db, "drawings/" + lastKey));
     });
 
-    // Ctrl+Z undo shortcut
-    window.addEventListener("keydown", (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
-        if (filledShapes.length === 0) return;
-        filledShapes.pop();
-        redrawCanvas();
-        set(drawingsRef, filledShapes);
-      }
+    clearBtn.addEventListener("click", () => {
+      filledShapes = [];
+      shapeKeys = [];
+      redrawCanvas();
+      remove(drawingsRef);
     });
 
-    // Fill page button - shows hidden color input near button
+    // Fill page button shows color picker, then fills entire canvas
     fillPageBtn.addEventListener("click", () => {
       const rect = fillPageBtn.getBoundingClientRect();
       fillColorPicker.style.top = rect.bottom + window.scrollY + 5 + "px";
@@ -205,24 +189,25 @@
 
     fillColorPicker.addEventListener("input", () => {
       currentColor = fillColorPicker.value;
-      const fullScreenShape = {
+      const fullPageShape = {
         path: [
           { x: 0, y: 0 },
           { x: canvas.width, y: 0 },
           { x: canvas.width, y: canvas.height },
-          { x: 0, y: canvas.height },
+          { x: 0, y: canvas.height }
         ],
-        color: currentColor,
+        color: currentColor
       };
-      push(drawingsRef, fullScreenShape);
-      fillColorPicker.style.display = "none";
+      filledShapes.push(fullPageShape);
+      push(drawingsRef, fullPageShape);
+      redrawCanvas();
     });
 
     fillColorPicker.addEventListener("blur", () => {
       fillColorPicker.style.display = "none";
     });
 
-    // Canvas event listeners
+    // Canvas event listeners for mouse & touch
     canvas.addEventListener("mousedown", startDrawing);
     canvas.addEventListener("mousemove", drawPath);
     canvas.addEventListener("mouseup", stopDrawing);
@@ -231,6 +216,18 @@
     canvas.addEventListener("touchstart", startDrawing);
     canvas.addEventListener("touchmove", drawPath);
     canvas.addEventListener("touchend", stopDrawing);
+
+    // Listen for new drawings added by others
+    onChildAdded(drawingsRef, (snapshot) => {
+      const shape = snapshot.val();
+      const key = snapshot.key;
+      // Avoid duplicates if this client already has it
+      if (!shapeKeys.includes(key)) {
+        filledShapes.push(shape);
+        shapeKeys.push(key);
+        redrawCanvas();
+      }
+    });
   </script>
 </body>
 </html>
