@@ -1,0 +1,54 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: white;
+  height: 100%;
+  overflow: hidden;
+  font-family: sans-serif;
+}
+
+#toolbar {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 10;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 8px 12px;
+  border-radius: 8px;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+#toolbar input[type="color"],
+#toolbar button {
+  margin-right: 10px;
+  padding: 6px 10px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+canvas {
+  display: block;
+  width: 100vw;
+  /* height is set dynamically in JS */
+  touch-action: none;
+  cursor: crosshair;
+}
+
+/* Banner placeholder */
+#banner {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 80px;
+  background: #eee;
+  border-top: 1px solid #ccc;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 18px;
+  color: #555;
+  user-select: none;
+  z-index: 20;
+}

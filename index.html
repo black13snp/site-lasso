@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Lasso Fill with Tools + Banner + Fill Page</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="toolbar">
+    <input type="color" id="colorPicker" value="#111111" />
+    <button id="undoBtn">Undo</button>
+    <button id="clearBtn">Clear All</button>
+    <button id="fillPageBtn">Fill Page</button>
+
+    <!-- Hidden color picker for fill page -->
+    <input type="color" id="fillColorPicker" style="display:none; position:absolute;"/>
+  </div>
+
+  <canvas id="draw"></canvas>
+
+  <div id="banner">
+    <!-- Dummy banner ad example -->
+    <div style="width:728px; height:90px; background:#ccc; color:#333; display:flex; justify-content:center; align-items:center; font-weight:bold; border: 2px dashed #999; user-select:none;">
+      Your Ad Banner Here
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("draw");
+    const ctx = canvas.getContext("2d");
+    const colorPicker = document.getElementById("colorPicker");
+    const clearBtn = document.getElementById("clearBtn");
+    const undoBtn = document.getElementById("undoBtn");
+    const fillPageBtn = document.getElementById("fillPageBtn");
+    const fillColorPicker = document.getElementById("fillColorPicker");
+
+    let isDrawing = false;
+    let path = [];
+    let filledShapes = [];
+    let currentColor = "#111";
+
+    function resizeCanvas() {
+      const bannerHeight = document.getElementById("banner").offsetHeight;
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight - bannerHeight;
+      redrawCanvas();
+    }
+
+    resizeCanvas();
+    window.addEventListener("resize", resizeCanvas);
+
+    function getXY(e) {
+      if (e.touches) {
+        return [e.touches[0].clientX, e.touches[0].clientY];
+      } else {
+        return [e.clientX, e.clientY];
+      }
+    }
+
+    function redrawCanvas() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      for (let shape of filledShapes) {
+        ctx.beginPath();
+        ctx.moveTo(shape.path[0].x, shape.path[0].y);
+        for (let i = 1; i < shape.path.length; i++) {
+          ctx.lineTo(shape.path[i].x, shape.path[i].y);
+        }
+        ctx.closePath();
+        ctx.fillStyle = shape.color;
+        ctx.fill();
+      }
+
+      if (isDrawing && path.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(path[0].x, path[0].y);
+        for (let i = 1; i < path.length; i++) {
+          ctx.lineTo(path[i].x, path[i].y);
+        }
+        ctx.closePath();
+        ctx.fillStyle = currentColor;
+        ctx.fill();
+      }
+    }
+
+    function startDrawing(e) {
+      isDrawing = true;
+      path = [];
+      const [x, y] = getXY(e);
+      path.push({ x, y });
+    }
+
+    function drawPath(e) {
+      if (!isDrawing) return;
+      const [x, y] = getXY(e);
+      path.push({ x, y });
+      redrawCanvas();
+    }
+
+    function stopDrawing() {
+      if (!isDrawing) return;
+      isDrawing = false;
+
+      if (path.length > 2) {
+        filledShapes.push({
+          path: [...path],
+          color: currentColor,
+        });
+      }
+
+      path = [];
+      redrawCanvas();
+    }
+
+    // Color picker for drawing
+    colorPicker.addEventListener("input", () => {
+      currentColor = colorPicker.value;
+    });
+
+    // Clear all button
+    clearBtn.addEventListener("click", () => {
+      filledShapes = [];
+      redrawCanvas();
+    });
+
+    // Undo button
+    undoBtn.addEventListener("click", () => {
+      filledShapes.pop();
+      redrawCanvas();
+    });
+
+    // Ctrl+Z undo shortcut
+    window.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        filledShapes.pop();
+        redrawCanvas();
+      }
+    });
+
+    // Fill page button click shows hidden color input near button
+    fillPageBtn.addEventListener("click", () => {
+      // Position the hidden color picker right below the fillPageBtn
+      const rect = fillPageBtn.getBoundingClientRect();
+      fillColorPicker.style.top = rect.bottom + window.scrollY + 5 + "px";
+      fillColorPicker.style.left = rect.left + window.scrollX + "px";
+      fillColorPicker.value = currentColor;
+      fillColorPicker.style.display = "inline-block";
+      fillColorPicker.focus();
+      fillColorPicker.click();
+    });
+
+    // When user picks color from hidden input, fill the page and hide input
+    fillColorPicker.addEventListener("input", () => {
+      currentColor = fillColorPicker.value;
+
+      filledShapes.push({
+        path: [
+          { x: 0, y: 0 },
+          { x: canvas.width, y: 0 },
+          { x: canvas.width, y: canvas.height },
+          { x: 0, y: canvas.height },
+        ],
+        color: currentColor,
+      });
+
+      redrawCanvas();
+    });
+
+    fillColorPicker.addEventListener("blur", () => {
+      fillColorPicker.style.display = "none";
+    });
+
+    // Canvas event listeners
+    canvas.addEventListener("mousedown", startDrawing);
+    canvas.addEventListener("mousemove", drawPath);
+    canvas.addEventListener("mouseup", stopDrawing);
+    canvas.addEventListener("mouseout", stopDrawing);
+
+    canvas.addEventListener("touchstart", startDrawing);
+    canvas.addEventListener("touchmove", drawPath);
+    canvas.addEventListener("touchend", stopDrawing);
+  </script>
+</body>
+</html>
