@@ -4,14 +4,13 @@
   <meta charset="UTF-8" />
   <title>Lasso Fill with Realtime Drawing</title>
   <style>
-    /* Make sure body and html take full height and no margin */
     html, body {
       margin: 0; padding: 0; height: 100%; overflow: hidden;
       -webkit-tap-highlight-color: transparent;
       -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none;
     }
     #toolbar {
-      position: fixed;
+      position: absolute;
       top: 10px;
       left: 10px;
       z-index: 10;
@@ -22,7 +21,9 @@
     }
     #draw {
       display: block;
-      touch-action: none; /* prevent scrolling on touch */
+      touch-action: none;
+      position: absolute;
+      top: 0; left: 0;
     }
     #fillColorPicker {
       display: none;
@@ -41,12 +42,10 @@
 
   <canvas id="draw"></canvas>
 
-  <!-- Firebase SDK -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-app.js";
-    import { getDatabase, ref, push, onChildAdded, remove } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-database.js";
+    import { getDatabase, ref, push, onChildAdded, onChildRemoved, remove } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-database.js";
 
-    // Your Firebase config
     const firebaseConfig = {
       apiKey: "AIzaSyAXpYUlrzogc_OQB8upk0q_QrpooOPdX7E",
       authDomain: "lasso-snp.firebaseapp.com",
@@ -62,7 +61,6 @@
     const db = getDatabase(app);
     const drawingsRef = ref(db, "drawings");
 
-    // Canvas & toolbar elements
     const canvas = document.getElementById("draw");
     const ctx = canvas.getContext("2d");
     const colorPicker = document.getElementById("colorPicker");
@@ -75,9 +73,9 @@
     let path = [];
     let filledShapes = [];
     let shapeKeys = [];
+    let keyMap = {};
     let currentColor = colorPicker.value;
 
-    // Resize canvas to fill viewport (same for desktop and mobile)
     function resizeCanvas() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
@@ -86,7 +84,6 @@
     window.addEventListener("resize", resizeCanvas);
     resizeCanvas();
 
-    // Get XY coords from mouse or touch event
     function getXY(e) {
       if (e.touches && e.touches.length > 0) {
         return [e.touches[0].clientX, e.touches[0].clientY];
@@ -94,10 +91,8 @@
       return [e.clientX, e.clientY];
     }
 
-    // Redraw all filled shapes + current path if drawing
     function redrawCanvas() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-
       for (const shape of filledShapes) {
         ctx.beginPath();
         ctx.moveTo(shape.path[0].x, shape.path[0].y);
@@ -108,20 +103,8 @@
         ctx.fillStyle = shape.color;
         ctx.fill();
       }
-
-      if (isDrawing && path.length > 1) {
-        ctx.beginPath();
-        ctx.moveTo(path[0].x, path[0].y);
-        for (let i = 1; i < path.length; i++) {
-          ctx.lineTo(path[i].x, path[i].y);
-        }
-        ctx.closePath();
-        ctx.fillStyle = currentColor;
-        ctx.fill();
-      }
     }
 
-    // Drawing event handlers
     function startDrawing(e) {
       e.preventDefault();
       isDrawing = true;
@@ -129,13 +112,23 @@
       const [x, y] = getXY(e);
       path.push({ x, y });
     }
+
     function drawPath(e) {
       e.preventDefault();
       if (!isDrawing) return;
       const [x, y] = getXY(e);
       path.push({ x, y });
       redrawCanvas();
+      ctx.beginPath();
+      ctx.moveTo(path[0].x, path[0].y);
+      for (let i = 1; i < path.length; i++) {
+        ctx.lineTo(path[i].x, path[i].y);
+      }
+      ctx.closePath();
+      ctx.fillStyle = currentColor;
+      ctx.fill();
     }
+
     function stopDrawing(e) {
       e.preventDefault();
       if (!isDrawing) return;
@@ -146,17 +139,12 @@
           path: [...path],
           color: currentColor
         };
-        filledShapes.push(newShape);
-        redrawCanvas();
-        // Push to Firebase
-        push(drawingsRef, newShape);
+        const pushRef = push(drawingsRef, newShape);
+        keyMap[pushRef.key] = newShape;
       }
-
       path = [];
-      redrawCanvas();
     }
 
-    // Toolbar controls
     colorPicker.addEventListener("input", () => {
       currentColor = colorPicker.value;
     });
@@ -165,18 +153,15 @@
       if (shapeKeys.length === 0) return;
       const lastKey = shapeKeys.pop();
       filledShapes.pop();
-      redrawCanvas();
-      remove(ref(db, "drawings/" + lastKey));
+      remove(ref(db, `drawings/${lastKey}`));
     });
 
     clearBtn.addEventListener("click", () => {
       filledShapes = [];
       shapeKeys = [];
-      redrawCanvas();
       remove(drawingsRef);
     });
 
-    // Fill page button shows color picker, then fills entire canvas
     fillPageBtn.addEventListener("click", () => {
       const rect = fillPageBtn.getBoundingClientRect();
       fillColorPicker.style.top = rect.bottom + window.scrollY + 5 + "px";
@@ -198,16 +183,14 @@
         ],
         color: currentColor
       };
-      filledShapes.push(fullPageShape);
-      push(drawingsRef, fullPageShape);
-      redrawCanvas();
+      const pushRef = push(drawingsRef, fullPageShape);
+      keyMap[pushRef.key] = fullPageShape;
     });
 
     fillColorPicker.addEventListener("blur", () => {
       fillColorPicker.style.display = "none";
     });
 
-    // Canvas event listeners for mouse & touch
     canvas.addEventListener("mousedown", startDrawing);
     canvas.addEventListener("mousemove", drawPath);
     canvas.addEventListener("mouseup", stopDrawing);
@@ -217,16 +200,20 @@
     canvas.addEventListener("touchmove", drawPath);
     canvas.addEventListener("touchend", stopDrawing);
 
-    // Listen for new drawings added by others
     onChildAdded(drawingsRef, (snapshot) => {
       const shape = snapshot.val();
       const key = snapshot.key;
-      // Avoid duplicates if this client already has it
       if (!shapeKeys.includes(key)) {
         filledShapes.push(shape);
         shapeKeys.push(key);
         redrawCanvas();
       }
+    });
+
+    onChildRemoved(drawingsRef, () => {
+      filledShapes = [];
+      shapeKeys = [];
+      redrawCanvas();
     });
   </script>
 </body>
