@@ -10,7 +10,7 @@
       -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none;
     }
     #toolbar {
-      position: absolute;
+      position: fixed;
       top: 10px;
       left: 10px;
       z-index: 10;
@@ -22,8 +22,6 @@
     #draw {
       display: block;
       touch-action: none;
-      position: absolute;
-      top: 0; left: 0;
     }
     #fillColorPicker {
       display: none;
@@ -42,9 +40,10 @@
 
   <canvas id="draw"></canvas>
 
+  <!-- Firebase SDK -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-app.js";
-    import { getDatabase, ref, push, onChildAdded, onChildRemoved, remove } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-database.js";
+    import { getDatabase, ref, push, onChildAdded, remove } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-database.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyAXpYUlrzogc_OQB8upk0q_QrpooOPdX7E",
@@ -73,7 +72,6 @@
     let path = [];
     let filledShapes = [];
     let shapeKeys = [];
-    let keyMap = {};
     let currentColor = colorPicker.value;
 
     function resizeCanvas() {
@@ -93,6 +91,7 @@
 
     function redrawCanvas() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+
       for (const shape of filledShapes) {
         ctx.beginPath();
         ctx.moveTo(shape.path[0].x, shape.path[0].y);
@@ -103,9 +102,21 @@
         ctx.fillStyle = shape.color;
         ctx.fill();
       }
+
+      if (isDrawing && path.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(path[0].x, path[0].y);
+        for (let i = 1; i < path.length; i++) {
+          ctx.lineTo(path[i].x, path[i].y);
+        }
+        ctx.closePath();
+        ctx.fillStyle = currentColor;
+        ctx.fill();
+      }
     }
 
     function startDrawing(e) {
+      if (e.shiftKey) return;
       e.preventDefault();
       isDrawing = true;
       path = [];
@@ -119,14 +130,6 @@
       const [x, y] = getXY(e);
       path.push({ x, y });
       redrawCanvas();
-      ctx.beginPath();
-      ctx.moveTo(path[0].x, path[0].y);
-      for (let i = 1; i < path.length; i++) {
-        ctx.lineTo(path[i].x, path[i].y);
-      }
-      ctx.closePath();
-      ctx.fillStyle = currentColor;
-      ctx.fill();
     }
 
     function stopDrawing(e) {
@@ -139,11 +142,59 @@
           path: [...path],
           color: currentColor
         };
-        const pushRef = push(drawingsRef, newShape);
-        keyMap[pushRef.key] = newShape;
+        filledShapes.push(newShape);
+        const shapeRef = push(drawingsRef, newShape);
+        shapeKeys.push(shapeRef.key);
+        redrawCanvas();
       }
+
       path = [];
     }
+
+    // 🎯 NEW: Pick color from existing shape
+    function pickColorFromCanvas(e) {
+      if (!e.shiftKey && !e.touches) return;
+
+      const [x, y] = getXY(e);
+
+      for (let i = filledShapes.length - 1; i >= 0; i--) {
+        const shape = filledShapes[i];
+        ctx.beginPath();
+        ctx.moveTo(shape.path[0].x, shape.path[0].y);
+        for (let j = 1; j < shape.path.length; j++) {
+          ctx.lineTo(shape.path[j].x, shape.path[j].y);
+        }
+        ctx.closePath();
+
+        if (ctx.isPointInPath(x, y)) {
+          currentColor = shape.color;
+          colorPicker.value = currentColor;
+          break;
+        }
+      }
+    }
+
+    // Mouse/Touch interactions
+    canvas.addEventListener("mousedown", startDrawing);
+    canvas.addEventListener("mousemove", drawPath);
+    canvas.addEventListener("mouseup", stopDrawing);
+    canvas.addEventListener("mouseout", stopDrawing);
+
+    canvas.addEventListener("touchstart", startDrawing);
+    canvas.addEventListener("touchmove", drawPath);
+    canvas.addEventListener("touchend", stopDrawing);
+
+    canvas.addEventListener("click", pickColorFromCanvas);
+    canvas.addEventListener("touchstart", (e) => {
+      if (e.touches.length === 1) {
+        const timeout = setTimeout(() => {
+          pickColorFromCanvas(e);
+        }, 500);
+        const cancel = () => clearTimeout(timeout);
+        canvas.addEventListener("touchend", cancel, { once: true });
+        canvas.addEventListener("touchmove", cancel, { once: true });
+      }
+    });
 
     colorPicker.addEventListener("input", () => {
       currentColor = colorPicker.value;
@@ -153,13 +204,15 @@
       if (shapeKeys.length === 0) return;
       const lastKey = shapeKeys.pop();
       filledShapes.pop();
-      remove(ref(db, `drawings/${lastKey}`));
+      remove(ref(db, "drawings/" + lastKey));
+      redrawCanvas();
     });
 
     clearBtn.addEventListener("click", () => {
       filledShapes = [];
       shapeKeys = [];
       remove(drawingsRef);
+      redrawCanvas();
     });
 
     fillPageBtn.addEventListener("click", () => {
@@ -183,22 +236,15 @@
         ],
         color: currentColor
       };
-      const pushRef = push(drawingsRef, fullPageShape);
-      keyMap[pushRef.key] = fullPageShape;
+      filledShapes.unshift(fullPageShape); // Put background behind
+      const shapeRef = push(drawingsRef, fullPageShape);
+      shapeKeys.unshift(shapeRef.key);
+      redrawCanvas();
     });
 
     fillColorPicker.addEventListener("blur", () => {
       fillColorPicker.style.display = "none";
     });
-
-    canvas.addEventListener("mousedown", startDrawing);
-    canvas.addEventListener("mousemove", drawPath);
-    canvas.addEventListener("mouseup", stopDrawing);
-    canvas.addEventListener("mouseout", stopDrawing);
-
-    canvas.addEventListener("touchstart", startDrawing);
-    canvas.addEventListener("touchmove", drawPath);
-    canvas.addEventListener("touchend", stopDrawing);
 
     onChildAdded(drawingsRef, (snapshot) => {
       const shape = snapshot.val();
@@ -208,12 +254,6 @@
         shapeKeys.push(key);
         redrawCanvas();
       }
-    });
-
-    onChildRemoved(drawingsRef, () => {
-      filledShapes = [];
-      shapeKeys = [];
-      redrawCanvas();
     });
   </script>
 </body>
